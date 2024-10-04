@@ -1,0 +1,251 @@
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+using TD_Audio_Tools_1._0._1_BETA;
+
+namespace TH_1._0._0
+{
+    public partial class Form1 : Form
+    {
+        public Form1()
+        {
+            InitializeComponent();
+            this.FormClosing += new FormClosingEventHandler(Form1_FormClosing);
+            InitializeProgressBar();
+        }
+
+        private bool isCheckBoxChecked = false;
+        private const string DllFileName = "Core.dll";
+        private bool isRunning = false;
+        private string dllDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DLL");
+
+        [DllImport("DLL\\Core.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void ProcessFiles(string thdFilePath, string ac3FilePath, string saveFilePath, int flag);
+
+        private void InitializeProgressBar()
+        {
+            progressBar1.Minimum = 0;
+            progressBar1.Maximum = 100;
+            progressBar1.Value = 0;
+        }
+
+        private void UpdateProgressBar(int value)
+        {
+            if (value < progressBar1.Minimum) value = progressBar1.Minimum;
+            if (value > progressBar1.Maximum) value = progressBar1.Maximum;
+
+            this.Invoke(new Action(() =>
+            {
+                progressBar1.Value = value;
+                progressBar1.Refresh();
+            }));
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Title = "Open File",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "Dolby Lossless (THD)|*.thd"
+            };
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = openFileDialog.FileName;
+                textBox_THD.Text = filePath;
+            }
+        }
+
+        private void textBox_THD_TextChanged(object sender, EventArgs e) { }
+
+        private void button_AC3_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Title = "Open File",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "Dolby Digital (AC3)|*.ac3"
+            };
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = openFileDialog.FileName;
+                textBox_AC3.Text = filePath;
+            }
+        }
+
+        private void textBox_AC3_TextChanged(object sender, EventArgs e) { }
+
+        private void button_Save_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog saveFileDialog = new SaveFileDialog
+            {
+                Title = "Save File",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "THD+AC3 File|*.thd+ac3"
+            };
+
+            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = saveFileDialog.FileName;
+                textBox_Save.Text = filePath;
+            }
+        }
+
+        private void textBox_Save_TextChanged(object sender, EventArgs e) { }
+
+        private void RunDllFunction()
+        {
+            try
+            {
+                ProcessFiles(textBox_THD.Text, textBox_AC3.Text, textBox_Save.Text, isCheckBoxChecked ? 1 : 0);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed To Run The DLL Function: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private bool CheckFileSizeValidity()
+        {
+            try
+            {
+                FileInfo thdFileInfo = new FileInfo(textBox_THD.Text);
+                FileInfo ac3FileInfo = new FileInfo(textBox_AC3.Text);
+                FileInfo saveFileInfo = new FileInfo(textBox_Save.Text);
+
+                long combinedInputSize = thdFileInfo.Length + ac3FileInfo.Length;
+                long outputFileSize = saveFileInfo.Length;
+
+                // Define tolerance (e.g., 1MB)
+                long tolerance = 1024 * 1024; // 1MB
+
+                // Output detailed file size information
+                Console.WriteLine($"THD File Size: {thdFileInfo.Length} bytes");
+                Console.WriteLine($"AC3 File Size: {ac3FileInfo.Length} bytes");
+                Console.WriteLine($"Save File Size: {outputFileSize} bytes");
+                Console.WriteLine($"Combined Input File Size: {combinedInputSize} bytes");
+
+                // Check if the total input file size is significantly larger than the output file size
+                if (combinedInputSize > outputFileSize + tolerance)
+                {
+                    MessageBox.Show("Input File Error, Please Check The File ！", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                    // Attempt to clear the output file
+                    try
+                    {
+                        using (FileStream fs = new FileStream(textBox_Save.Text, FileMode.Create, FileAccess.Write))
+                        {
+                            fs.SetLength(0); // Clear the file contents
+                        }
+                    }
+                    catch (Exception clearEx)
+                    {
+                        MessageBox.Show($"Failed To Clear The Output File: {clearEx.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error Checking File Sizes: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
+        private bool CheckDllExists()
+        {
+            string dllFilePath = Path.Combine(dllDirectory, DllFileName);
+            return File.Exists(dllFilePath);
+        }
+
+        private void button_Execute_Click(object sender, EventArgs e)
+        {
+            if (isRunning) return;
+
+            button_Execute.Enabled = false;
+            isRunning = true;
+
+            if (string.IsNullOrWhiteSpace(textBox_THD.Text) ||
+                string.IsNullOrWhiteSpace(textBox_AC3.Text) ||
+                string.IsNullOrWhiteSpace(textBox_Save.Text))
+            {
+                MessageBox.Show("Please Fill In The File Path Correctly And Do Not Leave It Blank ！", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                button_Execute.Enabled = true;
+                isRunning = false;
+                return;
+            }
+
+            if (!CheckDllExists())
+            {
+                MessageBox.Show($"Missing DLL File: {DllFileName}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                button_Execute.Enabled = true;
+                isRunning = false;
+                return;
+            }
+
+            label_Status.Text = "Executing...";
+            label_Status.ForeColor = Color.Red;
+
+            ThreadPool.QueueUserWorkItem(state =>
+            {
+                // Simulate progress
+                for (int i = 0; i <= 100; i += 10)
+                {
+                    UpdateProgressBar(i);
+                    Thread.Sleep(200); // Simulate some work
+                }
+
+                RunDllFunction();
+
+                // Wait for execution to complete before checking file size
+                this.Invoke(new Action(() =>
+                {
+                    if (!CheckFileSizeValidity())
+                    {
+                        // File size check failed
+                        label_Status.Text = "Exec Failure ！";
+                        label_Status.ForeColor = Color.Red;
+                    }
+                    else
+                    {
+                        // Execution completed
+                        label_Status.Text = "Execution Completed ！";
+                        label_Status.ForeColor = Color.Green;
+                    }
+
+                    UpdateProgressBar(100); // Ensure the progress bar reaches 100%
+                    button_Execute.Enabled = true;
+                    isRunning = false;
+                }));
+            });
+        }
+
+        private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        {
+            isCheckBoxChecked = checkBox1.Checked;
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e) { }
+
+        private void label_Status_Click(object sender, EventArgs e) { }
+
+        private void Form1_Load(object sender, EventArgs e) { }
+
+        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            About fm = new About();
+            fm.ShowDialog();
+        }
+
+        private void progressBar1_Click(object sender, EventArgs e) { }
+    }
+}

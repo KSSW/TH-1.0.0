@@ -1,0 +1,282 @@
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Timers;
+using System.Management;
+using TD_Audio_Tools_1._0._1_BETA;
+
+namespace TH_1._0._0
+{
+    public partial class Form1 : Form
+    {
+        public Form1()
+        {
+            InitializeComponent();
+            this.FormClosing += new FormClosingEventHandler(Form1_FormClosing);
+        }
+
+        private bool isCheckBoxChecked = false;
+        private Process externalProcess;
+        private System.Timers.Timer checkCpuUsageTimer;
+        private DateTime highCpuStartTime;
+        private bool isCpuHigh = false;
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Title = "打开文件",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "Dolby Lossless (THD)|*.thd"
+            };
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = openFileDialog.FileName;
+                textBox_THD.Text = filePath;
+            }
+        }
+
+        private void textBox_THD_TextChanged(object sender, EventArgs e)
+        {
+        }
+
+        private void button_AC3_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Title = "打开文件",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "Dolby Digital (AC3)|*.ac3"
+            };
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = openFileDialog.FileName;
+                textBox_AC3.Text = filePath;
+            }
+        }
+
+        private void textBox_AC3_TextChanged(object sender, EventArgs e)
+        {
+        }
+
+        private void button_Save_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog saveFileDialog = new SaveFileDialog
+            {
+                Title = "保存文件",
+                InitialDirectory = @"C:\Users\Desktop",
+                Filter = "THD+AC3 File|*.thd+ac3"
+            };
+
+            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = saveFileDialog.FileName;
+                textBox_Save.Text = filePath;
+            }
+        }
+
+        private void textBox_Save_TextChanged(object sender, EventArgs e)
+        {
+        }
+
+        private void RunExternalProgram(string arguments)
+        {
+            string executablePath = System.IO.Path.Combine(Application.StartupPath, "Core", "Core.exe");
+
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                Verb = "runas"
+            };
+
+            try
+            {
+                externalProcess = Process.Start(startInfo);
+                externalProcess.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed To Run The External Program: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void KillProcessAndChildren(int pid)
+        {
+            using (ManagementObjectSearcher searcher = new ManagementObjectSearcher
+                ("Select * From Win32_Process Where ParentProcessID=" + pid))
+            {
+                ManagementObjectCollection moc = searcher.Get();
+                foreach (ManagementObject mo in moc)
+                {
+                    KillProcessAndChildren(Convert.ToInt32(mo["ProcessID"]));
+                }
+            }
+
+            try
+            {
+                Process proc = Process.GetProcessById(pid);
+                proc.Kill();
+            }
+            catch (Exception ex)
+            {
+                // Log the exception
+                Debug.WriteLine($"Failed To Kill Process With PID {pid}: {ex.Message}");
+            }
+        }
+
+        private bool cpuUsageChecked = false;
+        private async void button_Execute_Click(object sender, EventArgs e)
+        {
+            // Disable the execute button to prevent multiple executions
+            button_Execute.Enabled = false;
+
+            if (string.IsNullOrWhiteSpace(textBox_THD.Text) ||
+                string.IsNullOrWhiteSpace(textBox_AC3.Text) ||
+                string.IsNullOrWhiteSpace(textBox_Save.Text))
+            {
+                MessageBox.Show("Please Fill In The File Path Correctly And Do Not Leave It Blank ！", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                // Re-enable the execute button before returning
+                button_Execute.Enabled = true;
+                return;
+            }
+
+            label_Status.Text = "Executing...";
+
+            string arguments = isCheckBoxChecked ?
+                $"\"{textBox_THD.Text}\" \"{textBox_AC3.Text}\" \"{textBox_Save.Text}\" -t" :
+                $"\"{textBox_THD.Text}\" \"{textBox_AC3.Text}\" \"{textBox_Save.Text}\"";
+
+            if (!cpuUsageChecked)
+            {
+                checkCpuUsageTimer = new System.Timers.Timer(1000);
+                checkCpuUsageTimer.Elapsed += CheckCpuUsage;
+                checkCpuUsageTimer.Start();
+                cpuUsageChecked = true;
+            }
+
+            await Task.Run(() => RunExternalProgram(arguments));
+
+            // Update the status label when execution is completed
+            label_Status.Text = "Execution Completed ！";
+            label_Status.ForeColor = Color.Green;
+
+            // Re-enable the execute button after execution is completed
+            button_Execute.Enabled = true;
+        }
+
+        private void CheckCpuUsage(object sender, ElapsedEventArgs e)
+        {
+            var cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+            var diskReadCounter = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", "_Total");
+            var diskWriteCounter = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", "_Total");
+
+            // Initial call to NextValue() always returns 0, so we need to call it twice with a delay
+            cpuCounter.NextValue();
+            diskReadCounter.NextValue();
+            diskWriteCounter.NextValue();
+            System.Threading.Thread.Sleep(1000); // Wait a second to get a valid reading
+
+            float cpuUsage = cpuCounter.NextValue();
+            float diskReadBytes = diskReadCounter.NextValue();
+            float diskWriteBytes = diskWriteCounter.NextValue();
+            float diskUsage = (diskReadBytes + diskWriteBytes) / (1024 * 1024); // Convert to MB/s
+
+            if (cpuUsage >= 24 && cpuUsage <= 28)
+            {
+                if (!isCpuHigh)
+                {
+                    highCpuStartTime = DateTime.Now;
+                    isCpuHigh = true;
+                }
+                else if ((DateTime.Now - highCpuStartTime).TotalSeconds >= 1)
+                {
+                    if (diskUsage <= 100)
+                    {
+                        checkCpuUsageTimer.Stop();
+
+                        if (externalProcess != null && !externalProcess.HasExited)
+                        {
+                            try
+                            {
+                                KillProcessAndChildren(externalProcess.Id);
+                                externalProcess.Dispose();
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show($"Failed To Kill The External Process: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }
+                        }
+
+                        if (cpuUsageChecked)
+                        {
+                            Invoke(new Action(() =>
+                            {
+                                MessageBox.Show("Input File Error, Please Check The File ！", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                label_Status.Text = "Exec Failure ！";
+                                label_Status.ForeColor = Color.Red;
+                            }));
+                            cpuUsageChecked = false;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                isCpuHigh = false;
+            }
+        }
+
+        private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        {
+            isCheckBoxChecked = checkBox1.Checked;
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (externalProcess != null)
+            {
+                try
+                {
+                    if (!externalProcess.HasExited)
+                    {
+                        externalProcess.Kill();
+                    }
+                    externalProcess.Dispose();
+                }
+                catch (InvalidOperationException)
+                {
+                    // Process has already exited or not started
+                }
+                catch (Exception ex)
+                {
+                    // Log or handle other exceptions
+                    Debug.WriteLine($"Exception Isn FormClosing: {ex.Message}");
+                }
+            }
+        }
+
+        private void label_Status_Click(object sender, EventArgs e)
+        {
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            About fm = new About();
+            fm.ShowDialog();
+        }
+    }
+}
